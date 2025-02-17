@@ -13,6 +13,7 @@ void TaskLEDControl(void *pvParameters) {
       digitalWrite(GPIO_NUM_48, LOW); // Turn OFF LED
     }
     ledState = 1 - ledState;
+    Serial.println("LED State: " + String(ledState));
     vTaskDelay(2000);
   }
 }
