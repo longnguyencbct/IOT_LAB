@@ -8,6 +8,8 @@
 #include "DHT20.h"
 #include "Wire.h"
 #include <ArduinoOTA.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 constexpr char WIFI_SSID[] = "abcd";//TODO
 constexpr char WIFI_PASSWORD[] = "123456789";//TODO
@@ -90,7 +92,7 @@ void InitWiFi() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (WiFi.status() != WL_CONNECTED) {
     // Delay 500ms until a connection has been successfully established
-    delay(500);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
     Serial.print(".");
   }
   Serial.println("Connected to AP");
@@ -107,6 +109,96 @@ const bool reconnect() {
   return true;
 }
 
+void WiFiTask(void *pvParameters) {
+  while (1) {
+    if (!reconnect()) {
+      vTaskDelay(500 / portTICK_PERIOD_MS);
+      continue;
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+void ThingsBoardTask(void *pvParameters) {
+  while (1) {
+    if (!tb.connected()) {
+      Serial.print("Connecting to: ");
+      Serial.print(THINGSBOARD_SERVER);
+      Serial.print(" with token ");
+      Serial.println(TOKEN);
+      if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
+        Serial.println("Failed to connect");
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        continue;
+      }
+
+      tb.sendAttributeData("macAddress", WiFi.macAddress().c_str());
+
+      Serial.println("Subscribing for RPC...");
+      if (!tb.RPC_Subscribe(callbacks.cbegin(), callbacks.cend())) {
+        Serial.println("Failed to subscribe for RPC");
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        continue;
+      }
+
+      if (!tb.Shared_Attributes_Subscribe(attributes_callback)) {
+        Serial.println("Failed to subscribe for shared attribute updates");
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        continue;
+      }
+
+      Serial.println("Subscribe done");
+
+      if (!tb.Shared_Attributes_Request(attribute_shared_request_callback)) {
+        Serial.println("Failed to request for shared attributes");
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        continue;
+      }
+    }
+
+    if (attributesChanged) {
+      attributesChanged = false;
+      tb.sendAttributeData(LED_STATE_ATTR, digitalRead(LED_PIN));
+    }
+
+    tb.loop();
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+void SensorTask(void *pvParameters) {
+  while (1) {
+    if (millis() - previousDataSend > telemetrySendInterval) {
+      previousDataSend = millis();
+
+      dht20.read();
+      
+      float temperature = dht20.getTemperature();
+      float humidity = dht20.getHumidity();
+
+      if (isnan(temperature) || isnan(humidity)) {
+        Serial.println("Failed to read from DHT20 sensor!");
+      } else {
+        Serial.print("Temperature: ");
+        Serial.print(temperature);
+        Serial.print(" °C, Humidity: ");
+        Serial.print(humidity);
+        Serial.println(" %");
+
+        tb.sendTelemetryData("temperature", temperature);
+        tb.sendTelemetryData("humidity", humidity);
+      }
+
+      tb.sendAttributeData("rssi", WiFi.RSSI());
+      tb.sendAttributeData("channel", WiFi.channel());
+      tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
+      tb.sendAttributeData("localIp", WiFi.localIP().toString().c_str());
+      tb.sendAttributeData("ssid", WiFi.SSID().c_str());
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
 void setup() {
   Serial.begin(SERIAL_DEBUG_BAUD);
   pinMode(LED_PIN, OUTPUT);
@@ -115,86 +207,12 @@ void setup() {
 
   Wire.begin(SDA_PIN, SCL_PIN);
   dht20.begin();
-  
+
+  xTaskCreate(WiFiTask, "WiFi Task", 4096, NULL, 1, NULL);
+  xTaskCreate(ThingsBoardTask, "ThingsBoard Task", 8192, NULL, 1, NULL);
+  xTaskCreate(SensorTask, "Sensor Task", 4096, NULL, 1, NULL);
 }
 
 void loop() {
-  delay(10);
-
-  if (!reconnect()) {
-    return;
-  }
-
-  if (!tb.connected()) {
-    Serial.print("Connecting to: ");
-    Serial.print(THINGSBOARD_SERVER);
-    Serial.print(" with token ");
-    Serial.println(TOKEN);
-    if (!tb.connect(THINGSBOARD_SERVER, TOKEN, THINGSBOARD_PORT)) {
-      Serial.println("Failed to connect");
-      return;
-    }
-
-    tb.sendAttributeData("macAddress", WiFi.macAddress().c_str());
-
-    Serial.println("Subscribing for RPC...");
-    if (!tb.RPC_Subscribe(callbacks.cbegin(), callbacks.cend())) {
-      Serial.println("Failed to subscribe for RPC");
-      return;
-    }
-
-    if (!tb.Shared_Attributes_Subscribe(attributes_callback)) {
-      Serial.println("Failed to subscribe for shared attribute updates");
-      return;
-    }
-
-    Serial.println("Subscribe done");
-
-    if (!tb.Shared_Attributes_Request(attribute_shared_request_callback)) {
-      Serial.println("Failed to request for shared attributes");
-      return;
-    }
-  }
-
-  if (attributesChanged) {
-    attributesChanged = false;
-    tb.sendAttributeData(LED_STATE_ATTR, digitalRead(LED_PIN));
-  }
-
-  // if (ledMode == 1 && millis() - previousStateChange > blinkingInterval) {
-  //   previousStateChange = millis();
-  //   digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-  //   Serial.print("LED state changed to: ");
-  //   Serial.println(!digitalRead(LED_PIN));
-  // }
-
-  if (millis() - previousDataSend > telemetrySendInterval) {
-    previousDataSend = millis();
-
-    dht20.read();
-    
-    float temperature = dht20.getTemperature();
-    float humidity = dht20.getHumidity();
-
-    if (isnan(temperature) || isnan(humidity)) {
-      Serial.println("Failed to read from DHT20 sensor!");
-    } else {
-      Serial.print("Temperature: ");
-      Serial.print(temperature);
-      Serial.print(" °C, Humidity: ");
-      Serial.print(humidity);
-      Serial.println(" %");
-
-      tb.sendTelemetryData("temperature", temperature);
-      tb.sendTelemetryData("humidity", humidity);
-    }
-
-    tb.sendAttributeData("rssi", WiFi.RSSI());
-    tb.sendAttributeData("channel", WiFi.channel());
-    tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
-    tb.sendAttributeData("localIp", WiFi.localIP().toString().c_str());
-    tb.sendAttributeData("ssid", WiFi.SSID().c_str());
-  }
-
-  tb.loop();
+  // Empty loop as tasks are managed by FreeRTOS
 }
