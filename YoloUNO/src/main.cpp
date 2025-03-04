@@ -11,10 +11,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-constexpr char WIFI_SSID[] = "abcd";//TODO
-constexpr char WIFI_PASSWORD[] = "123456789";//TODO
+constexpr char WIFI_SSID[] = ".";//TODO
+constexpr char WIFI_PASSWORD[] = "12345679";//TODO
 
-constexpr char TOKEN[] = "7s5pokn2se622pzn1jxu";//TODO
+constexpr char TOKEN[] = "qrn77ftmnhsf8vsupkhl";//TODO
 
 constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
