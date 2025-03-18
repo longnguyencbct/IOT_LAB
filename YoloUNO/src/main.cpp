@@ -11,10 +11,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-constexpr char WIFI_SSID[] = ".";//TODO
-constexpr char WIFI_PASSWORD[] = "12345679";//TODO
+constexpr char WIFI_SSID[] = "Ngaow";//TODO
+constexpr char WIFI_PASSWORD[] = "1234567890";//TODO
 
-constexpr char TOKEN[] = "qrn77ftmnhsf8vsupkhl";//TODO
+constexpr char TOKEN[] = "oW5herDtyc1H6Buc2BCF";//TODO
 
 constexpr char THINGSBOARD_SERVER[] = "app.coreiot.io";
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
@@ -185,19 +185,46 @@ void SensorTask(void *pvParameters) {
         Serial.print(humidity);
         Serial.println(" %");
 
-        tb.sendTelemetryData("temperature", temperature);
-        tb.sendTelemetryData("humidity", humidity);
+        // Create a JSON object for telemetry
+        StaticJsonDocument<256> telemetryJson;
+        telemetryJson["temperature"] = temperature;
+        telemetryJson["humidity"]   = humidity;
+        
+        // Serialize the JSON object into a uint8_t array
+        uint8_t telemetryBuf[256];  // Using uint8_t for MQTT publish
+        size_t len = serializeJson(telemetryJson, telemetryBuf);
+
+        // Publish to "esp/telemetry"
+        if (mqttClient.publish("esp/telemetry", telemetryBuf, len)) {
+            Serial.println("Published telemetry data");
+        } else {
+            Serial.println("Failed to publish telemetry data");
+        }
       }
 
-      tb.sendAttributeData("rssi", WiFi.RSSI());
-      tb.sendAttributeData("channel", WiFi.channel());
-      tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
-      tb.sendAttributeData("localIp", WiFi.localIP().toString().c_str());
-      tb.sendAttributeData("ssid", WiFi.SSID().c_str());
+      // Create a JSON object for attributes
+      StaticJsonDocument<256> attrJson;
+      attrJson["rssi"]    = WiFi.RSSI();
+      attrJson["channel"] = WiFi.channel();
+      attrJson["bssid"]   = WiFi.BSSIDstr();
+      attrJson["localIp"] = WiFi.localIP().toString();
+      attrJson["ssid"]    = WiFi.SSID();
+
+      // Serialize the JSON object into a uint8_t array
+      uint8_t attrBuf[256];  // Using uint8_t for MQTT publish
+      size_t attrLen = serializeJson(attrJson, attrBuf);
+
+      // Publish to "esp/attributes"
+      if (mqttClient.publish("esp/attributes", attrBuf, attrLen)) {
+          Serial.println("Published attribute data");
+      } else {
+          Serial.println("Failed to publish attribute data");
+      }
     }
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
+
 
 void setup() {
   Serial.begin(SERIAL_DEBUG_BAUD);
